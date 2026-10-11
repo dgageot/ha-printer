@@ -280,7 +280,7 @@ class UsbPrinterTests(unittest.TestCase):
             "bash",
             "-c",
             f"cupsfilter -p /etc/cups/ppd/{QUEUE}.ppd -e "
-            f"-m printer/{QUEUE} /usr/share/cups/data/testprint >/tmp/output.pcl; "
+            f"-m printer/{QUEUE} /usr/share/cups/data/testprint >/tmp/output.pcl && "
             "test -s /tmp/output.pcl",
         )
         self.assertIn("hpcups", result.stderr)
