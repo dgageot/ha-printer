@@ -196,6 +196,35 @@ class UsbPrinterTests(unittest.TestCase):
             timeout=15,
         )
 
+    def test_oversized_requests_are_rejected(self):
+        result = self.post_ipp(self.server_ip(), b"\0" * (25 * 1024 * 1024 + 1))
+        self.assertEqual(result.stdout, b"413")
+
+    def test_queue_rejects_jobs_when_full(self):
+        self.addCleanup(self.execute, "cancel", "-a", QUEUE)
+        self.execute(
+            "bash",
+            "-euc",
+            'for i in {1..100}; do lp -d "$1" -H hold '
+            "/usr/share/cups/data/testprint >/dev/null; done",
+            "--",
+            QUEUE,
+        )
+        rejected = self.execute(
+            "lp",
+            "-d",
+            QUEUE,
+            "-H",
+            "hold",
+            "/usr/share/cups/data/testprint",
+            check=False,
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("Too many active jobs", rejected.stderr)
+        self.assertEqual(
+            len(self.execute("lpstat", "-o", QUEUE).stdout.splitlines()), 100
+        )
+
     def test_remote_administration_is_denied(self):
         ip = self.server_ip()
         uri = f"ipp://{ip}:631/printers/{QUEUE}"
@@ -413,7 +442,10 @@ class UsbPrinterTests(unittest.TestCase):
             ["docker", "kill", self.server], check=True, capture_output=True, timeout=15
         )
         subprocess.run(
-            ["docker", "start", self.server], check=True, capture_output=True, timeout=15
+            ["docker", "start", self.server],
+            check=True,
+            capture_output=True,
+            timeout=15,
         )
         self.wait_for_queue()
         self.assertIn(f"{QUEUE}-{job_id}", self.execute("lpstat", "-o", QUEUE).stdout)
