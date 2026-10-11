@@ -8,4 +8,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY rootfs /
-RUN chmod +x /etc/s6-overlay/s6-rc.d/*/run /usr/share/usb-printer/init.sh
+RUN chmod +x /etc/s6-overlay/s6-rc.d/*/run /usr/share/usb-printer/*.sh
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD /usr/share/usb-printer/healthcheck.sh

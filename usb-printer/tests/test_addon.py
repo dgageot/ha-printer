@@ -50,6 +50,9 @@ class UsbPrinterTests(unittest.TestCase):
                 "docker",
                 "run",
                 "--detach",
+                "--health-interval=1s",
+                "--health-start-period=0s",
+                "--health-retries=2",
                 "--network",
                 cls.network,
                 "--name",
@@ -119,6 +122,7 @@ class UsbPrinterTests(unittest.TestCase):
             self.assertNotEqual(
                 self.execute("lpstat", "-p", QUEUE, check=False).returncode, 0
             )
+            self.execute("/usr/share/usb-printer/healthcheck.sh")
             self.execute("rm", "/data/no-printer")
             self.wait_for_queue()
             self.assertIn(
@@ -264,6 +268,46 @@ class UsbPrinterTests(unittest.TestCase):
                 else:
                     self.fail(f"CUPS did not recover after restarting {service}")
                 self.assert_advertised()
+
+    def wait_for_health(self, expected):
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            state = subprocess.check_output(
+                [
+                    "docker",
+                    "inspect",
+                    "--format",
+                    "{{.State.Health.Status}}",
+                    self.server,
+                ],
+                text=True,
+                timeout=10,
+            ).strip()
+            if state == expected:
+                return
+            time.sleep(0.5)
+        self.fail(f"Expected {expected} health, got {state}")
+
+    def test_health_detects_dependency_failure_and_recovers(self):
+        self.wait_for_health("healthy")
+        try:
+            self.execute("s6-svc", "-d", "/run/service/printer-avahi")
+            self.execute("s6-svc", "-r", "/run/service/printer-cups")
+            self.wait_for_health("unhealthy")
+        finally:
+            self.execute("s6-svc", "-u", "/run/service/printer-avahi")
+        self.wait_for_health("healthy")
+        self.wait_for_queue()
+        self.assert_advertised()
+
+    def test_health_detects_unresponsive_scheduler(self):
+        self.wait_for_health("healthy")
+        try:
+            self.execute("pkill", "-STOP", "-x", "cupsd")
+            self.wait_for_health("unhealthy")
+        finally:
+            self.execute("pkill", "-CONT", "-x", "cupsd")
+        self.wait_for_health("healthy")
 
     def test_partial_initialization_is_repaired(self):
         result = subprocess.run(

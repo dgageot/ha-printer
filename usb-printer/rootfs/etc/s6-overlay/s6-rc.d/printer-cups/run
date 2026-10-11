@@ -1,7 +1,11 @@
 #!/bin/bash
 set -eu
-until dbus-send --system --print-reply --dest=org.freedesktop.Avahi \
+until dbus-send --system --print-reply --reply-timeout=2000 --dest=org.freedesktop.Avahi \
     / org.freedesktop.Avahi.Server.GetState 2>/dev/null | grep -q 'int32 2'; do
+    if (( SECONDS >= 30 )); then
+        echo "Waiting for Avahi before starting printer-cups..." >&2
+        SECONDS=0
+    fi
     sleep 1
 done
 exec cupsd -f

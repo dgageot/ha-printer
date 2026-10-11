@@ -1,7 +1,11 @@
 #!/bin/bash
 set -eu
-until dbus-send --system --print-reply --dest=org.freedesktop.DBus \
+until dbus-send --system --print-reply --reply-timeout=2000 --dest=org.freedesktop.DBus \
     /org/freedesktop/DBus org.freedesktop.DBus.ListNames >/dev/null 2>&1; do
+    if (( SECONDS >= 30 )); then
+        echo "Waiting for D-Bus before starting printer-avahi..." >&2
+        SECONDS=0
+    fi
     sleep 1
 done
 exec avahi-daemon --no-chroot
