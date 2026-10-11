@@ -91,7 +91,11 @@ class UsbPrinterTests(unittest.TestCase):
         while time.monotonic() < deadline:
             result = cls.execute("lpstat", "-v", QUEUE, check=False)
             default = cls.execute("lpstat", "-d", check=False)
-            if result.returncode == 0 and URI in result.stdout and QUEUE in default.stdout:
+            if (
+                result.returncode == 0
+                and URI in result.stdout
+                and QUEUE in default.stdout
+            ):
                 return
             time.sleep(0.5)
         logs = subprocess.check_output(["docker", "logs", cls.server], text=True)
@@ -370,6 +374,59 @@ class UsbPrinterTests(unittest.TestCase):
         )
         self.assertIn("cupsd.conf", result.stdout + result.stderr)
 
+    def test_legacy_initialization_symlinks_are_repaired(self):
+        for target in ["/missing", "/data/cups", "/etc/cups"]:
+            with self.subTest(target=target):
+                subprocess.run(
+                    [
+                        "docker",
+                        "run",
+                        "--rm",
+                        "--network",
+                        self.network,
+                        "--entrypoint",
+                        "bash",
+                        IMAGE,
+                        "-euc",
+                        (
+                            'mkdir -p /data; ln -s "$1" /data/cups; '
+                            "/usr/share/usb-printer/init.sh; "
+                            "test ! -L /data/cups; "
+                            "test -s /data/cups/cups-files.conf"
+                        ),
+                        "--",
+                        target,
+                    ],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+
+    def test_dangling_configuration_symlink_is_repaired(self):
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                self.network,
+                "--entrypoint",
+                "bash",
+                IMAGE,
+                "-euc",
+                (
+                    "mkdir -p /data/cups; "
+                    "ln -s /missing /data/cups/cups-files.conf; "
+                    "/usr/share/usb-printer/init.sh; "
+                    "test ! -L /data/cups/cups-files.conf; "
+                    "test -s /data/cups/cups-files.conf"
+                ),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+
     def test_interrupted_initialization_is_retried(self):
         subprocess.run(
             [
@@ -458,7 +515,10 @@ class UsbPrinterTests(unittest.TestCase):
     def test_stale_uri_is_corrected_after_restart(self):
         self.execute("lpadmin", "-p", QUEUE, "-v", URI.replace("TEST-PRINTER", "OLD"))
         subprocess.run(
-            ["docker", "restart", self.server], check=True, capture_output=True, timeout=30
+            ["docker", "restart", self.server],
+            check=True,
+            capture_output=True,
+            timeout=30,
         )
         self.wait_for_queue()
         self.assertIn(URI, self.execute("lpstat", "-v", QUEUE).stdout)

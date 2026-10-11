@@ -7,12 +7,23 @@ if [ ! -d /sys/class/net/end0 ]; then
 fi
 
 mkdir -p /data /run/dbus /run/cups
+if [ -L /data/cups ]; then
+    if [ ! -d /data/cups ] || [ "$(readlink /data/cups)" = /etc/cups ]; then
+        rm /data/cups
+    else
+        echo "/data/cups must be a directory, not a symlink." >&2
+        exit 1
+    fi
+fi
 if [ ! -d /data/cups ]; then
     rm -rf /data/cups.init
     cp -a /usr/share/cups-defaults /data/cups.init
     mv /data/cups.init /data/cups
 else
     # Repair interrupted initialization without overwriting saved queues.
+    if [ -L /data/cups/cups-files.conf ] && [ ! -e /data/cups/cups-files.conf ]; then
+        rm /data/cups/cups-files.conf
+    fi
     cp -an /usr/share/cups-defaults/. /data/cups/
 fi
 rm -rf /etc/cups
