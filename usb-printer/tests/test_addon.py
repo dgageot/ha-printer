@@ -265,6 +265,24 @@ class UsbPrinterTests(unittest.TestCase):
                     self.fail(f"CUPS did not recover after restarting {service}")
                 self.assert_advertised()
 
+    def test_job_survives_abrupt_shutdown(self):
+        held = self.execute(
+            "lp", "-d", QUEUE, "-H", "hold", "/usr/share/cups/data/testprint"
+        ).stdout
+        job_id = int(held.split(f"{QUEUE}-", 1)[1].split()[0])
+        self.addCleanup(self.execute, "cancel", f"{QUEUE}-{job_id}")
+        subprocess.run(
+            ["docker", "kill", self.server], check=True, capture_output=True, timeout=15
+        )
+        subprocess.run(
+            ["docker", "start", self.server], check=True, capture_output=True, timeout=15
+        )
+        self.wait_for_queue()
+        self.assertIn(f"{QUEUE}-{job_id}", self.execute("lpstat", "-o", QUEUE).stdout)
+        self.execute(
+            "cmp", "/usr/share/cups/data/testprint", f"/data/spool/d{job_id:05d}-001"
+        )
+
     def test_queue_survives_container_restart(self):
         before = self.execute("lpstat", "-v", QUEUE).stdout
         held = self.execute(

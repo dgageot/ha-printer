@@ -17,8 +17,9 @@ chmod 775 /data/cache
 rm -rf /var/spool/cups /var/cache/cups
 ln -s /data/spool /var/spool/cups
 ln -s /data/cache /var/cache/cups
-sed -i -e 's|^ErrorLog .*|ErrorLog stderr|' -e '/^FatalErrors /d' /etc/cups/cups-files.conf
-printf '\nFatalErrors config browse\n' >> /etc/cups/cups-files.conf
+sed -i -e 's|^ErrorLog .*|ErrorLog stderr|' -e '/^FatalErrors /d' \
+    -e '/^SyncOnClose /d' /etc/cups/cups-files.conf
+printf '\nFatalErrors config browse\nSyncOnClose Yes\n' >> /etc/cups/cups-files.conf
 
 if [ ! -d /sys/class/net/end0 ]; then
     echo "Bonjour requires the Green LAN interface end0." >&2
