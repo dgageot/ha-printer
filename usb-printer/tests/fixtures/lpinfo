@@ -1,0 +1,8 @@
+#!/bin/sh
+if [ "$1" = "-v" ]; then
+    if [ -f /data/no-printer ]; then exit 0; fi
+    echo 'network socket://unrelated-printer'
+    echo 'direct usb://HP/LaserJet%20M109-M112?serial=TEST-PRINTER'
+else
+    exec /usr/sbin/lpinfo "$@"
+fi

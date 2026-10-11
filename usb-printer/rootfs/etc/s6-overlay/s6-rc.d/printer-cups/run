@@ -1,0 +1,7 @@
+#!/bin/bash
+set -eu
+until dbus-send --system --print-reply --dest=org.freedesktop.Avahi \
+    / org.freedesktop.Avahi.Server.GetState 2>/dev/null | grep -q 'int32 2'; do
+    sleep 1
+done
+exec cupsd -f

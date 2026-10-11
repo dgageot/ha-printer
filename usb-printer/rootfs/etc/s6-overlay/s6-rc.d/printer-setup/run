@@ -1,0 +1,28 @@
+#!/bin/bash
+set -eu
+queue=HP_LaserJet_M109-M112
+until LC_ALL=C lpstat -r | grep -q 'scheduler is running'; do sleep 1; done
+
+echo "Waiting for your USB HP LaserJet M109-M112..."
+uri=
+while [ -z "$uri" ]; do
+    uri=$(lpinfo -v | awk 'tolower($2) ~ /^usb:\/\/hp\/laserjet%20m109-m112(\?|$)/ { print $2; exit }')
+    if [ -z "$uri" ]; then sleep 5; fi
+done
+
+if ! lpstat -p "$queue" >/dev/null 2>&1; then
+    model=$(lpinfo -m | awk 'tolower($0) ~ /hp-laserjet_m109-m112\.ppd/ { print $1; exit }')
+    if [ -z "$model" ]; then
+        echo "HP LaserJet M109-M112 driver is missing." >&2
+        exit 1
+    fi
+    lpadmin -p "$queue" -v "$uri" -m "$model" \
+        -D 'HP LaserJet' -o printer-is-shared=true \
+        -o PageSize=A4 -E
+    lpadmin -d "$queue"
+else
+    lpadmin -p "$queue" -v "$uri"
+fi
+
+echo "HP LaserJet is shared at green-printer.local."
+exec sleep infinity

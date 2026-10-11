@@ -1,0 +1,7 @@
+#!/bin/bash
+set -eu
+until dbus-send --system --print-reply --dest=org.freedesktop.DBus \
+    /org/freedesktop/DBus org.freedesktop.DBus.ListNames >/dev/null 2>&1; do
+    sleep 1
+done
+exec avahi-daemon --no-chroot
