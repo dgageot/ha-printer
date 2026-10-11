@@ -311,7 +311,12 @@ class UsbPrinterTests(unittest.TestCase):
                 self.assert_advertised()
 
     def test_queue_survives_container_restart(self):
-        before = self.execute("cat", "/etc/cups/printers.conf").stdout
+        before = self.execute("lpstat", "-v", QUEUE).stdout
+        held = self.execute(
+            "lp", "-d", QUEUE, "-H", "hold", "/usr/share/cups/data/testprint"
+        ).stdout
+        job_id = held.split(f"{QUEUE}-", 1)[1].split()[0]
+        self.addCleanup(self.execute, "cancel", f"{QUEUE}-{job_id}")
         subprocess.run(
             ["docker", "restart", self.server],
             check=True,
@@ -319,8 +324,8 @@ class UsbPrinterTests(unittest.TestCase):
             timeout=30,
         )
         self.wait_for_queue()
-        after = self.execute("cat", "/etc/cups/printers.conf").stdout
-        self.assertEqual(before, after)
+        self.assertEqual(before, self.execute("lpstat", "-v", QUEUE).stdout)
+        self.assertIn(f"{QUEUE}-{job_id}", self.execute("lpstat", "-o", QUEUE).stdout)
         self.assertEqual(
             self.execute("readlink", "/var/spool/cups").stdout.strip(), "/data/spool"
         )
