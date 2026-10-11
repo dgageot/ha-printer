@@ -1,5 +1,5 @@
 name: USB Printer
-version: "0.1.0"
+version: "0.1.1"
 slug: usb-printer
 url: https://github.com/dgageot/ha-printer
 description: USB printing and Bonjour for your HP LaserJet on Home Assistant Green.
