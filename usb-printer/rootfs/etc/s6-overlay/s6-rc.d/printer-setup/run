@@ -24,5 +24,9 @@ else
     lpadmin -p "$queue" -v "$uri"
 fi
 
+if ! LC_ALL=C lpstat -d | grep -q '^system default destination:'; then
+    lpadmin -d "$queue"
+fi
+
 echo "HP LaserJet is shared at green-printer.local."
 exec sleep infinity

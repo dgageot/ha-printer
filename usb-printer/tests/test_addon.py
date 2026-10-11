@@ -512,6 +512,33 @@ class UsbPrinterTests(unittest.TestCase):
             "cmp", "/usr/share/cups/data/testprint", f"/data/spool/d{job_id:05d}-001"
         )
 
+    def test_missing_default_is_repaired(self):
+        self.execute("s6-svc", "-d", "/run/service/printer-setup")
+        self.execute("s6-svc", "-d", "/run/service/printer-cups")
+        self.execute("s6-svwait", "-d", "-t", "10000", "/run/service/printer-cups")
+        try:
+            self.execute(
+                "sed", "-i", "s/DefaultPrinter/Printer/g", "/data/cups/printers.conf"
+            )
+        finally:
+            self.execute("s6-svc", "-u", "/run/service/printer-cups")
+            self.execute("s6-svc", "-u", "/run/service/printer-setup")
+        self.wait_for_queue()
+        self.assertIn(QUEUE, self.execute("lpstat", "-d").stdout)
+
+    def test_existing_default_is_preserved(self):
+        other = "OtherPrinter"
+        self.execute("lpadmin", "-p", other, "-v", "file:/dev/null", "-m", "raw", "-E")
+        self.addCleanup(self.execute, "lpadmin", "-x", other)
+        self.addCleanup(self.execute, "lpadmin", "-d", QUEUE)
+        self.execute("lpadmin", "-d", other)
+        result = self.execute(
+            "timeout", "3", "/etc/s6-overlay/s6-rc.d/printer-setup/run", check=False
+        )
+        self.assertEqual(result.returncode, 124)
+        self.assertIn("is shared", result.stdout)
+        self.assertIn(other, self.execute("lpstat", "-d").stdout)
+
     def test_stale_uri_is_corrected_after_restart(self):
         self.execute("lpadmin", "-p", QUEUE, "-v", URI.replace("TEST-PRINTER", "OLD"))
         subprocess.run(
