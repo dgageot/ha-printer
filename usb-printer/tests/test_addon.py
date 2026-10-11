@@ -141,8 +141,8 @@ class UsbPrinterTests(unittest.TestCase):
         ]:
             self.assertNotIn(f"{package} ii ", result.stdout)
 
-    def test_remote_administration_is_denied(self):
-        ip = subprocess.check_output(
+    def server_ip(self):
+        return subprocess.check_output(
             [
                 "docker",
                 "inspect",
@@ -152,23 +152,16 @@ class UsbPrinterTests(unittest.TestCase):
             ],
             text=True,
         ).strip()
-        uri = f"ipp://{ip}:631/printers/{QUEUE}"
 
-        def attribute(tag, name, value):
-            name, value = name.encode(), value.encode()
-            return (
-                bytes([tag])
-                + len(name).to_bytes(2)
-                + name
-                + len(value).to_bytes(2)
-                + value
-            )
+    @staticmethod
+    def attribute(tag, name, value):
+        name, value = name.encode(), value.encode()
+        return (
+            bytes([tag]) + len(name).to_bytes(2) + name + len(value).to_bytes(2) + value
+        )
 
-        body = bytes.fromhex("020040090000000101")
-        body += attribute(0x47, "attributes-charset", "utf-8")
-        body += attribute(0x48, "attributes-natural-language", "en")
-        body += attribute(0x45, "printer-uri", uri) + b"\x03"
-        result = subprocess.run(
+    def post_ipp(self, ip, body):
+        return subprocess.run(
             [
                 "docker",
                 "run",
@@ -198,19 +191,20 @@ class UsbPrinterTests(unittest.TestCase):
             check=True,
             timeout=15,
         )
+
+    def test_remote_administration_is_denied(self):
+        ip = self.server_ip()
+        uri = f"ipp://{ip}:631/printers/{QUEUE}"
+
+        body = bytes.fromhex("020040090000000101")
+        body += self.attribute(0x47, "attributes-charset", "utf-8")
+        body += self.attribute(0x48, "attributes-natural-language", "en")
+        body += self.attribute(0x45, "printer-uri", uri) + b"\x03"
+        result = self.post_ipp(ip, body)
         self.assertEqual(result.stdout, b"403")
 
     def test_remote_document_access_is_denied(self):
-        ip = subprocess.check_output(
-            [
-                "docker",
-                "inspect",
-                "--format",
-                "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
-                self.server,
-            ],
-            text=True,
-        ).strip()
+        ip = self.server_ip()
         held = self.execute(
             "lp", "-d", QUEUE, "-H", "hold", "/usr/share/cups/data/testprint"
         ).stdout
@@ -218,21 +212,11 @@ class UsbPrinterTests(unittest.TestCase):
         self.addCleanup(self.execute, "cancel", f"{QUEUE}-{job_id}")
         uri = f"ipp://{ip}:631/printers/{QUEUE}"
 
-        def attribute(tag, name, value):
-            name, value = name.encode(), value.encode()
-            return (
-                bytes([tag])
-                + len(name).to_bytes(2)
-                + name
-                + len(value).to_bytes(2)
-                + value
-            )
-
         body = bytes.fromhex("020040270000000101")
-        body += attribute(0x47, "attributes-charset", "utf-8")
-        body += attribute(0x48, "attributes-natural-language", "en")
-        body += attribute(0x45, "printer-uri", uri)
-        body += attribute(0x42, "requesting-user-name", "root")
+        body += self.attribute(0x47, "attributes-charset", "utf-8")
+        body += self.attribute(0x48, "attributes-natural-language", "en")
+        body += self.attribute(0x45, "printer-uri", uri)
+        body += self.attribute(0x42, "requesting-user-name", "root")
         for name, value in [("job-id", job_id), ("document-number", 1)]:
             encoded = name.encode()
             body += (
@@ -243,36 +227,7 @@ class UsbPrinterTests(unittest.TestCase):
                 + value.to_bytes(4)
             )
         body += b"\x03"
-        result = subprocess.run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--interactive",
-                "--network",
-                self.network,
-                "--entrypoint",
-                "curl",
-                IMAGE,
-                "--silent",
-                "--show-error",
-                "--max-time",
-                "5",
-                "--output",
-                "/dev/null",
-                "--write-out",
-                "%{http_code}",
-                "--header",
-                "Content-Type: application/ipp",
-                "--data-binary",
-                "@-",
-                f"http://{ip}:631/printers/{QUEUE}",
-            ],
-            input=body,
-            capture_output=True,
-            check=True,
-            timeout=15,
-        )
+        result = self.post_ipp(ip, body)
         self.assertEqual(result.stdout, b"403")
 
     def test_print_filter_produces_output_without_printing(self):
