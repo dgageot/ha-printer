@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = os.environ.get("USB_PRINTER_TEST_IMAGE", "ha-printer:local")
 QUEUE = "HP_LaserJet_M109-M112"
+URI = "usb://HP/LaserJet%20M109-M112?serial=TEST-PRINTER"
 
 
 class UsbPrinterTests(unittest.TestCase):
@@ -88,8 +89,9 @@ class UsbPrinterTests(unittest.TestCase):
     def wait_for_queue(cls):
         deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
-            result = cls.execute("lpstat", "-p", QUEUE, check=False)
-            if result.returncode == 0:
+            result = cls.execute("lpstat", "-v", QUEUE, check=False)
+            default = cls.execute("lpstat", "-d", check=False)
+            if result.returncode == 0 and URI in result.stdout and QUEUE in default.stdout:
                 return
             time.sleep(0.5)
         logs = subprocess.check_output(["docker", "logs", cls.server], text=True)
@@ -452,6 +454,14 @@ class UsbPrinterTests(unittest.TestCase):
         self.execute(
             "cmp", "/usr/share/cups/data/testprint", f"/data/spool/d{job_id:05d}-001"
         )
+
+    def test_stale_uri_is_corrected_after_restart(self):
+        self.execute("lpadmin", "-p", QUEUE, "-v", URI.replace("TEST-PRINTER", "OLD"))
+        subprocess.run(
+            ["docker", "restart", self.server], check=True, capture_output=True, timeout=30
+        )
+        self.wait_for_queue()
+        self.assertIn(URI, self.execute("lpstat", "-v", QUEUE).stdout)
 
     def test_queue_survives_container_restart(self):
         before = self.execute("lpstat", "-v", QUEUE).stdout
