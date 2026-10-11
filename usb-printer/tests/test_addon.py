@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-IMAGE = os.environ.get("USB_PRINTER_TEST_IMAGE", "usb-printer:local")
+IMAGE = os.environ.get("USB_PRINTER_TEST_IMAGE", "ha-printer:local")
 QUEUE = "HP_LaserJet_M109-M112"
 
 
