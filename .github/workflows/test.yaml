@@ -1,0 +1,44 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    env:
+      USB_PRINTER_TEST_IMAGE: ha-printer:ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+      - name: Install linters
+        run: |
+          python -m pip install ruff==0.16.10
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - name: Lint
+        run: |
+          ruff check --isolated usb-printer/tests
+          find usb-printer/rootfs -type f \( -name run -o -name '*.sh' \) -exec shellcheck {} +
+          shellcheck usb-printer/tests/fixtures/lpinfo
+      - name: Build current checkout
+        run: |
+          base=$(awk '/aarch64:/ { print $2 }' usb-printer/build.yaml)
+          test "$(sed -n 's/^ARG BUILD_FROM=//p' usb-printer/Dockerfile)" = "$base"
+          docker build --pull --no-cache --build-arg "BUILD_FROM=$base" -t "$USB_PRINTER_TEST_IMAGE" usb-printer
+      - name: Record package versions
+        run: docker run --rm --entrypoint dpkg-query "$USB_PRINTER_TEST_IMAGE" -W
+      - name: Integration tests
+        run: python -m unittest discover -s usb-printer/tests -v
