@@ -1,4 +1,4 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/aarch64-base-debian:bookworm@sha256:68f4c1a11d10facc5442ff11509a164463f98b154c80dc1dfeedbc267dd71665
+ARG BUILD_FROM=ghcr.io/home-assistant/aarch64-base-debian:bookworm
 FROM ${BUILD_FROM}
 
 RUN apt-get update \
