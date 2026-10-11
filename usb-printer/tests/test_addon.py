@@ -265,6 +265,100 @@ class UsbPrinterTests(unittest.TestCase):
                     self.fail(f"CUPS did not recover after restarting {service}")
                 self.assert_advertised()
 
+    def test_partial_initialization_is_repaired(self):
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                self.network,
+                "--entrypoint",
+                "bash",
+                IMAGE,
+                "-euc",
+                (
+                    "mkdir -p /data/cups/ppd; "
+                    "printf saved >/data/cups/ppd/saved.ppd; "
+                    "/usr/share/usb-printer/init.sh; "
+                    "test -s /data/cups/cups-files.conf; "
+                    'test "$(cat /data/cups/ppd/saved.ppd)" = saved; '
+                    "/usr/share/usb-printer/init.sh; "
+                    'test "$(cat /data/cups/ppd/saved.ppd)" = saved; '
+                    "test \"$(grep -c '^SyncOnClose ' /data/cups/cups-files.conf)\" = 1"
+                ),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertIn("cupsd.conf", result.stdout + result.stderr)
+
+    def test_interrupted_initialization_is_retried(self):
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                self.network,
+                "--entrypoint",
+                "bash",
+                IMAGE,
+                "-euc",
+                (
+                    "mkdir -p /data/cups.init; "
+                    "touch /data/cups.init/incomplete; "
+                    "/usr/share/usb-printer/init.sh; "
+                    "test ! -e /data/cups.init; "
+                    "test ! -e /data/cups/incomplete; "
+                    "test -s /data/cups/cups-files.conf"
+                ),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+
+    def test_job_survives_container_replacement(self):
+        held = self.execute(
+            "lp", "-d", QUEUE, "-H", "hold", "/usr/share/cups/data/testprint"
+        ).stdout
+        job_id = int(held.split(f"{QUEUE}-", 1)[1].split()[0])
+        self.addCleanup(self.execute, "cancel", f"{QUEUE}-{job_id}")
+        subprocess.run(
+            ["docker", "stop", self.server], check=True, capture_output=True, timeout=30
+        )
+        subprocess.run(
+            ["docker", "rm", self.server], check=True, capture_output=True, timeout=15
+        )
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "--detach",
+                "--network",
+                self.network,
+                "--name",
+                self.server,
+                "--volume",
+                f"{self.volume}:/data",
+                "--volume",
+                f"{ROOT / 'tests/fixtures/lpinfo'}:/usr/local/bin/lpinfo:ro",
+                IMAGE,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+        self.wait_for_queue()
+        self.assertIn(f"{QUEUE}-{job_id}", self.execute("lpstat", "-o", QUEUE).stdout)
+        self.execute(
+            "cmp", "/usr/share/cups/data/testprint", f"/data/spool/d{job_id:05d}-001"
+        )
+        self.assert_advertised()
+
     def test_job_survives_abrupt_shutdown(self):
         held = self.execute(
             "lp", "-d", QUEUE, "-H", "hold", "/usr/share/cups/data/testprint"
