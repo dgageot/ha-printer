@@ -369,7 +369,7 @@ class UsbPrinterTests(unittest.TestCase):
             )
             self.assertNotIn("Host name conflict", logs)
 
-    def test_conflicting_hostname_does_not_rename_or_crash_and_recovers(self):
+    def test_conflicting_hostname_is_unhealthy_and_recovers(self):
         peer = f"{self.server}-conflict"
         self.execute("s6-svc", "-d", "/run/service/printer-addresses")
         self.execute("s6-svwait", "-d", "-t", "10000", "/run/service/printer-addresses")
@@ -411,8 +411,20 @@ class UsbPrinterTests(unittest.TestCase):
                 time.sleep(0.5)
             else:
                 self.fail(f"Conflicting host did not start: {logs}")
+            self.assertNotEqual(
+                self.execute(
+                    "/usr/share/usb-printer/healthcheck.sh", check=False
+                ).returncode,
+                0,
+            )
             self.execute("s6-svc", "-u", "/run/service/printer-addresses")
             time.sleep(5)
+            self.assertNotEqual(
+                self.execute(
+                    "/usr/share/usb-printer/healthcheck.sh", check=False
+                ).returncode,
+                0,
+            )
             logs = subprocess.check_output(
                 ["docker", "logs", self.server],
                 text=True,
@@ -563,6 +575,16 @@ class UsbPrinterTests(unittest.TestCase):
             self.execute("s6-svc", "-u", "/run/service/printer-addresses")
         self.wait_for_health("healthy")
         self.assert_advertised()
+
+    def test_health_detects_stalled_address_publisher(self):
+        self.wait_for_health("healthy")
+        pid = self.execute("cat", "/run/printer-addresses.ready").stdout.strip()
+        self.execute("kill", "-STOP", pid)
+        try:
+            self.wait_for_health("unhealthy")
+        finally:
+            self.execute("kill", "-CONT", pid)
+        self.wait_for_health("healthy")
 
     def test_health_detects_unresponsive_scheduler(self):
         self.wait_for_health("healthy")
