@@ -24,6 +24,7 @@ class UsbPrinterTests(unittest.TestCase):
                 "network",
                 "create",
                 "--internal",
+                "--ipv6",
                 "-o",
                 "com.docker.network.container_iface_prefix=end",
                 cls.network,
@@ -279,8 +280,132 @@ class UsbPrinterTests(unittest.TestCase):
         )
         self.assertIn("hpcups", result.stderr)
 
+    def test_discovery_with_another_mdns_responder_on_the_host(self):
+        peer = f"{self.server}-mdns"
+        self.addCleanup(
+            subprocess.run,
+            ["docker", "rm", "--force", peer],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "--detach",
+                "--name",
+                peer,
+                "--network",
+                f"container:{self.server}",
+                "--entrypoint",
+                "bash",
+                IMAGE,
+                "-euc",
+                (
+                    "mkdir -p /run/avahi-daemon /run/dbus; dbus-daemon --system; "
+                    "printf '[server]\\nhost-name=homeassistant\\n"
+                    "allow-interfaces=end0\\n' >/tmp/avahi.conf; "
+                    "exec avahi-daemon --no-chroot --file=/tmp/avahi.conf"
+                ),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=20,
+        )
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            logs = subprocess.check_output(
+                ["docker", "logs", peer], text=True, stderr=subprocess.STDOUT
+            )
+            self.assertNotIn("Host name conflict", logs)
+            if "Host name is homeassistant.local." in logs:
+                break
+            time.sleep(0.5)
+        else:
+            self.fail(f"The host's mDNS responder did not start: {logs}")
+        self.execute("s6-svc", "-r", "/run/service/printer-avahi")
+        time.sleep(5)
+        self.execute("/usr/share/usb-printer/healthcheck.sh")
+        self.assert_advertised()
+        for family in ["-4", "-6"]:
+            result = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    peer,
+                    "timeout",
+                    "5",
+                    "avahi-resolve-host-name",
+                    family,
+                    "green-printer.local",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertIn("green-printer.local", result.stdout)
+        result = subprocess.run(
+            ["docker", "exec", peer, "ippfind", "-T", "3", "_ipp._tcp", "--print"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertIn(f"green-printer.local:631/printers/{QUEUE}", result.stdout)
+        for container in [self.server, peer]:
+            logs = subprocess.check_output(
+                ["docker", "logs", container], text=True, stderr=subprocess.STDOUT
+            )
+            self.assertNotIn("Host name conflict", logs)
+
+    def test_address_publishers_follow_interface_changes(self):
+        address = "192.0.2.10"
+
+        def change_address(action):
+            subprocess.run(
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--cap-add=NET_ADMIN",
+                    "--network",
+                    f"container:{self.server}",
+                    "--entrypoint",
+                    "ip",
+                    IMAGE,
+                    "address",
+                    action,
+                    f"{address}/32",
+                    "dev",
+                    "end0",
+                ],
+                check=True,
+                capture_output=True,
+                timeout=20,
+            )
+
+        def wait_for_publisher(expected):
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                result = self.execute(
+                    "pgrep", "-af", "^avahi-publish-address ", check=False
+                )
+                if (address in result.stdout) == expected:
+                    return
+                time.sleep(0.5)
+            self.fail(f"Unexpected address publishers: {result.stdout}")
+
+        change_address("add")
+        try:
+            wait_for_publisher(True)
+        finally:
+            change_address("del")
+        wait_for_publisher(False)
+        self.assert_advertised()
+
     def test_discovery_recovers_after_service_restarts(self):
-        for service in ["printer-dbus", "printer-avahi"]:
+        for service in ["printer-dbus", "printer-avahi", "printer-addresses"]:
             with self.subTest(service=service):
                 before = self.execute("pgrep", "-x", "cupsd").stdout.strip()
                 self.execute("s6-svc", "-r", f"/run/service/{service}")
@@ -289,7 +414,7 @@ class UsbPrinterTests(unittest.TestCase):
                     current = self.execute(
                         "pgrep", "-x", "cupsd", check=False
                     ).stdout.strip()
-                    if current and (service == "printer-avahi" or current != before):
+                    if current and (service != "printer-dbus" or current != before):
                         probe = self.execute(
                             "ippfind", "-T", "2", "_ipp._tcp", "--print", check=False
                         )
@@ -333,6 +458,16 @@ class UsbPrinterTests(unittest.TestCase):
             self.execute("s6-svc", "-u", "/run/service/printer-avahi")
         self.wait_for_health("healthy")
         self.wait_for_queue()
+        self.assert_advertised()
+
+    def test_health_detects_address_publisher_failure_and_recovers(self):
+        self.wait_for_health("healthy")
+        try:
+            self.execute("s6-svc", "-d", "/run/service/printer-addresses")
+            self.wait_for_health("unhealthy")
+        finally:
+            self.execute("s6-svc", "-u", "/run/service/printer-addresses")
+        self.wait_for_health("healthy")
         self.assert_advertised()
 
     def test_health_detects_unresponsive_scheduler(self):

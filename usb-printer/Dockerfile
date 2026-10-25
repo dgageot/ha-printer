@@ -3,7 +3,7 @@ FROM ${BUILD_FROM}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        cups printer-driver-hpcups avahi-daemon dbus \
+        cups printer-driver-hpcups avahi-daemon avahi-utils dbus iproute2 \
     && cp -a /etc/cups /usr/share/cups-defaults \
     && rm -rf /var/lib/apt/lists/*
 
