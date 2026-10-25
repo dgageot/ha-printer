@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import time
@@ -353,11 +354,106 @@ class UsbPrinterTests(unittest.TestCase):
             timeout=10,
         )
         self.assertIn(f"green-printer.local:631/printers/{QUEUE}", result.stdout)
+        self.assertEqual(self.query_addresses(), [self.server_ip()])
+        ipv6 = self.execute("ip", "-j", "-6", "address", "show", "dev", "end0").stdout
+        expected = sorted(
+            address["local"]
+            for interface in json.loads(ipv6)
+            for address in interface["addr_info"]
+            if address["scope"] == "global"
+        )
+        self.assertEqual(self.query_addresses(28), expected)
         for container in [self.server, peer]:
             logs = subprocess.check_output(
                 ["docker", "logs", container], text=True, stderr=subprocess.STDOUT
             )
             self.assertNotIn("Host name conflict", logs)
+
+    def test_conflicting_hostname_does_not_rename_or_crash_and_recovers(self):
+        peer = f"{self.server}-conflict"
+        self.execute("s6-svc", "-d", "/run/service/printer-addresses")
+        self.execute("s6-svwait", "-d", "-t", "10000", "/run/service/printer-addresses")
+        try:
+            subprocess.run(
+                [
+                    "docker",
+                    "run",
+                    "--detach",
+                    "--name",
+                    peer,
+                    "--network",
+                    self.network,
+                    "--entrypoint",
+                    "bash",
+                    IMAGE,
+                    "-euc",
+                    (
+                        "mkdir -p /run/avahi-daemon; "
+                        "printf '[server]\\nhost-name=green-printer\\n"
+                        "allow-interfaces=end0\\nenable-dbus=no\\n' >/tmp/avahi.conf; "
+                        "exec avahi-daemon --no-chroot --file=/tmp/avahi.conf"
+                    ),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=20,
+            )
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                logs = subprocess.check_output(
+                    ["docker", "logs", peer],
+                    text=True,
+                    stderr=subprocess.STDOUT,
+                    timeout=10,
+                )
+                if "Host name is green-printer.local." in logs:
+                    break
+                time.sleep(0.5)
+            else:
+                self.fail(f"Conflicting host did not start: {logs}")
+            self.execute("s6-svc", "-u", "/run/service/printer-addresses")
+            time.sleep(5)
+            logs = subprocess.check_output(
+                ["docker", "logs", self.server],
+                text=True,
+                stderr=subprocess.STDOUT,
+                timeout=10,
+            )
+            self.assertNotIn("Assertion", logs)
+            self.assertNotIn("picking new name", logs)
+        finally:
+            subprocess.run(
+                ["docker", "rm", "--force", peer],
+                check=True,
+                capture_output=True,
+                timeout=20,
+            )
+            self.execute("s6-svc", "-u", "/run/service/printer-addresses")
+        self.wait_for_health("healthy", timeout=45)
+        self.assert_advertised()
+
+    def query_addresses(self, record_type=1):
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                self.network,
+                "--volume",
+                f"{ROOT / 'tests/fixtures/mdns_query.py'}:/query.py:ro",
+                "--entrypoint",
+                "python3",
+                IMAGE,
+                "/query.py",
+                str(record_type),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return json.loads(result.stdout)
 
     def test_address_publishers_follow_interface_changes(self):
         address = "192.0.2.10"
@@ -386,15 +482,12 @@ class UsbPrinterTests(unittest.TestCase):
             )
 
         def wait_for_publisher(expected):
-            deadline = time.monotonic() + 10
+            deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
-                result = self.execute(
-                    "pgrep", "-af", "^avahi-publish-address ", check=False
-                )
-                if (address in result.stdout) == expected:
+                addresses = self.query_addresses()
+                if self.server_ip() in addresses and (address in addresses) == expected:
                     return
-                time.sleep(0.5)
-            self.fail(f"Unexpected address publishers: {result.stdout}")
+            self.fail(f"Unexpected published addresses: {addresses}")
 
         change_address("add")
         try:
@@ -422,6 +515,7 @@ class UsbPrinterTests(unittest.TestCase):
                             probe.returncode == 0
                             and f"green-printer.local:631/printers/{QUEUE}"
                             in probe.stdout
+                            and self.query_addresses() == [self.server_ip()]
                         ):
                             break
                     time.sleep(0.5)
@@ -429,8 +523,8 @@ class UsbPrinterTests(unittest.TestCase):
                     self.fail(f"CUPS did not recover after restarting {service}")
                 self.assert_advertised()
 
-    def wait_for_health(self, expected):
-        deadline = time.monotonic() + 20
+    def wait_for_health(self, expected, timeout=20):
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             state = subprocess.check_output(
                 [

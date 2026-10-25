@@ -31,7 +31,8 @@ jobs:
       - name: Lint
         run: |
           python -m unittest discover -s usb-printer/tests -p test_build.py -v
-          ruff check --isolated usb-printer/tests
+          python -m unittest discover -s usb-printer/tests -p test_addresses.py -v
+          ruff check --isolated usb-printer/tests usb-printer/rootfs/usr/share/usb-printer/*.py
           find usb-printer/rootfs -type f \( -name run -o -name '*.sh' \) -exec shellcheck {} +
           shellcheck usb-printer/tests/fixtures/lpinfo
       - name: Build current checkout
