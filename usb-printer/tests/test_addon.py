@@ -107,6 +107,14 @@ class UsbPrinterTests(unittest.TestCase):
         result = self.execute("ippfind", "-T", "3", "_ipp._tcp", "--print")
         self.assertIn(f"green-printer.local:631/printers/{QUEUE}", result.stdout)
 
+    def hold_job(self):
+        held = self.execute(
+            "lp", "-d", QUEUE, "-H", "hold", "/usr/share/cups/data/testprint"
+        ).stdout
+        job_id = int(held.split(f"{QUEUE}-", 1)[1].split()[0])
+        self.addCleanup(self.execute, "cancel", f"{QUEUE}-{job_id}")
+        return job_id
+
     def test_automatic_queue_and_ipp_attributes(self):
         result = self.execute("lpstat", "-v", QUEUE)
         self.assertIn(
@@ -246,11 +254,7 @@ class UsbPrinterTests(unittest.TestCase):
 
     def test_remote_document_access_is_denied(self):
         ip = self.server_ip()
-        held = self.execute(
-            "lp", "-d", QUEUE, "-H", "hold", "/usr/share/cups/data/testprint"
-        ).stdout
-        job_id = int(held.split(f"{QUEUE}-", 1)[1].split()[0])
-        self.addCleanup(self.execute, "cancel", f"{QUEUE}-{job_id}")
+        job_id = self.hold_job()
         uri = f"ipp://{ip}:631/printers/{QUEUE}"
 
         body = bytes.fromhex("020040270000000101")
@@ -705,11 +709,7 @@ class UsbPrinterTests(unittest.TestCase):
         )
 
     def test_job_survives_container_replacement(self):
-        held = self.execute(
-            "lp", "-d", QUEUE, "-H", "hold", "/usr/share/cups/data/testprint"
-        ).stdout
-        job_id = int(held.split(f"{QUEUE}-", 1)[1].split()[0])
-        self.addCleanup(self.execute, "cancel", f"{QUEUE}-{job_id}")
+        job_id = self.hold_job()
         subprocess.run(
             ["docker", "stop", self.server], check=True, capture_output=True, timeout=30
         )
@@ -743,11 +743,7 @@ class UsbPrinterTests(unittest.TestCase):
         self.assert_advertised()
 
     def test_job_survives_abrupt_shutdown(self):
-        held = self.execute(
-            "lp", "-d", QUEUE, "-H", "hold", "/usr/share/cups/data/testprint"
-        ).stdout
-        job_id = int(held.split(f"{QUEUE}-", 1)[1].split()[0])
-        self.addCleanup(self.execute, "cancel", f"{QUEUE}-{job_id}")
+        job_id = self.hold_job()
         subprocess.run(
             ["docker", "kill", self.server], check=True, capture_output=True, timeout=15
         )
