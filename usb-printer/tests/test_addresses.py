@@ -83,13 +83,19 @@ class AddressSelectionTests(unittest.TestCase):
         self.assertEqual(addresses, ("fe80::1",))
 
     def test_withdraws_addresses_when_link_is_down(self):
+        for flags in [(), ("UP",), ("LOWER_UP",)]:
+            with self.subTest(flags=flags):
+                self.assertEqual(
+                    self.select(
+                        [{"family": "inet", "scope": "global", "local": "192.0.2.2"}],
+                        flags=flags,
+                    ),
+                    (7, ()),
+                )
+
+    def test_down_interface_does_not_read_addresses(self):
         self.assertEqual(
-            self.select(
-                [
-                    {"family": "inet", "scope": "global", "local": "192.0.2.2"},
-                ],
-                flags=("UP",),
-            ),
+            publisher.interface_addresses([{"ifindex": 7, "flags": []}]),
             (7, ()),
         )
 

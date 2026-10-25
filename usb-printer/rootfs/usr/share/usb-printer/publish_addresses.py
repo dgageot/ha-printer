@@ -18,23 +18,25 @@ RETRY_DELAY = 30
 
 def interface_addresses(data):
     interface = data[0]
+    if "UP" not in interface["flags"] or "LOWER_UP" not in interface["flags"]:
+        return interface["ifindex"], ()
+
     addresses = []
-    if "UP" in interface["flags"] and "LOWER_UP" in interface["flags"]:
-        for family in ("inet", "inet6"):
-            candidates = [
-                address
-                for address in interface["addr_info"]
-                if address["family"] == family
-                and address["scope"] in ("global", "link")
-                and not address.get("tentative")
-                and not address.get("dadfailed")
-            ]
-            preferred = [
-                address
-                for address in candidates
-                if address["scope"] == "global" and not address.get("deprecated")
-            ]
-            addresses.extend(address["local"] for address in preferred or candidates)
+    for family in ("inet", "inet6"):
+        candidates = [
+            address
+            for address in interface["addr_info"]
+            if address["family"] == family
+            and address["scope"] in ("global", "link")
+            and not address.get("tentative")
+            and not address.get("dadfailed")
+        ]
+        preferred = [
+            address
+            for address in candidates
+            if address["scope"] == "global" and not address.get("deprecated")
+        ]
+        addresses.extend(address["local"] for address in preferred or candidates)
     return interface["ifindex"], tuple(sorted(addresses))
 
 
